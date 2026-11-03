@@ -1,0 +1,14 @@
+ssh -i "C:\Users\ujwal\Downloads\ganesh-society-key.pem" ec2-user@54.206.8.41
+
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+
+docker compose -f docker-compose.prod.yml ps
+
+curl -i http://127.0.0.1:8080/api/public/snapshot
+
+log check: docker compose -f docker-compose.prod.yml logs --tail=100 backend
+
+
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy

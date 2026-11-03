@@ -1,0 +1,45 @@
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ganesh_society
+      MYSQL_USER: ganesh_app
+      MYSQL_PASSWORD: ${DB_PASSWORD:?required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?required}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -u root --silent
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - society_net
+
+  backend:
+    image: ${DOCKERHUB_USERNAME:?required}/ganesh-society-backend:${IMAGE_TAG:-initial}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/ganesh_society
+      DB_USER: ganesh_app
+      DB_PASSWORD: ${DB_PASSWORD:?required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      CORS_ORIGIN: ${CORS_ORIGIN:?required}
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - society_net
+
+volumes:
+  mysql_data:
+
+networks:
+  society_net:
