@@ -55,7 +55,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: ./ganesh-society/backend
+          file: ./ganesh-society/backend/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |
