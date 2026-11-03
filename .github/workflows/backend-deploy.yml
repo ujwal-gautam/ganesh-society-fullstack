@@ -1,14 +1,15 @@
+
 name: Ganesh Society Backend CI/CD
 
 on:
   push:
-    branches: [ feature/Dev ]
+    branches: [feature/Dev]
     paths:
       - "ganesh-society/backend/**"
       - "ganesh-society/deploy/**"
       - ".github/workflows/backend-deploy.yml"
   pull_request:
-    branches: [ feature/Dev ]
+    branches: [feature/Dev]
   workflow_dispatch:
 
 permissions:
@@ -94,63 +95,15 @@ jobs:
 
             for i in $(seq 1 30); do
               if curl -fsS \
-                deploy:
-  needs: build-and-push
-  runs-on: ubuntu-latest
-  environment: production
-  if: github.event_name != 'pull_request'
-
-  steps:
-    - name: Deploy to EC2
-      uses: appleboy/ssh-action@v1
-      env:
-        IMAGE_TAG: ${{ github.sha }}
-      with:
-        host: ${{ secrets.EC2_HOST }}
-        username: ${{ secrets.EC2_USER }}
-        key: ${{ secrets.EC2_SSH_KEY }}
-        port: 22
-        timeout: 60s
-        command_timeout: 10m
-        envs: IMAGE_TAG
-        script: |
-          set -eu
-
-          cd /opt/ganesh-society
-
-          test -f .env
-          test -f docker-compose.prod.yml
-
-          echo "Deploying image tag: $IMAGE_TAG"
-
-          docker compose -f docker-compose.prod.yml \
-            pull backend
-
-          docker compose -f docker-compose.prod.yml \
-            up -d --no-deps backend
-
-          echo "Waiting for backend health check..."
-
-          for i in $(seq 1 30); do
-            if curl -fsS \
-              http://127.0.0.1:8080/api/public/snapshot \
-              >/dev/null; then
-
-              echo "Deployment successful"
-
-              if grep -q '^IMAGE_TAG=' .env; then
+                http://127.0.0.1:8080/api/public/snapshot \
+                >/dev/null; then
+                echo "Deployment successful"
                 sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" .env
-              else
-                printf '\nIMAGE_TAG=%s\n' "$IMAGE_TAG" >> .env
+                exit 0
               fi
+              sleep 5
+            done
 
-              exit 0
-            fi
-
-            sleep 5
-          done
-
-          echo "Backend health check failed"
-          docker compose -f docker-compose.prod.yml \
-            logs --tail=100 backend
-          exit 1
+            docker compose -f docker-compose.prod.yml \
+              logs --tail=100 backend
+            exit 1
