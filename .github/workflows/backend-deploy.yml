@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: ganesh-society/backend/pom.xml
 
       - name: Run backend tests
-        working-directory: backend
+        working-directory: ganesh-society/backend
         run: mvn -B clean verify
 
   build-and-push:
