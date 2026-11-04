@@ -3,13 +3,13 @@ name: Ganesh Society Backend CI/CD
 
 on:
   push:
-    branches: [feature/main]
+    branches: [main]
     paths:
       - "ganesh-society/backend/**"
       - "ganesh-society/deploy/**"
       - ".github/workflows/backend-deploy.yml"
   pull_request:
-    branches: [feature/main]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
