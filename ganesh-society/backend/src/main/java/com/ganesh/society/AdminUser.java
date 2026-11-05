@@ -1,19 +1,19 @@
 package com.ganesh.society;
 
 import jakarta.persistence.*;
-
-import java.math.BigDecimal;
-import java.time.LocalDate;
-
-@Entity
-@Table(name = "admin_users")
-public class AdminUser {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    public Long id;
-    public String email;
-    @Column(name = "password_hash")
-    public String passwordHash;
-    public String role = "ADMIN";
-    public boolean enabled = true;
+import java.time.Instant;
+import java.util.*;
+@Entity @Table(name="admin_users") public class AdminUser {
+ @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+ @Column(unique=true,nullable=false) public String email;
+ @Column(name="password_hash",nullable=false) public String passwordHash;
+ @Column(name="full_name") public String fullName;
+ // Legacy column retained for backward-compatible database migration.
+ public String role="ADMIN";
+ public boolean enabled=true;
+ @Column(name="token_version",nullable=false) public Long tokenVersion=0L;
+ @Column(name="created_at",insertable=false,updatable=false) public Instant createdAt;
+ @Column(name="updated_at",insertable=false,updatable=false) public Instant updatedAt;
+ @Column(name="last_login_at") public Instant lastLoginAt;
+ @ManyToMany(fetch=FetchType.EAGER) @JoinTable(name="user_roles",joinColumns=@JoinColumn(name="user_id"),inverseJoinColumns=@JoinColumn(name="role_id")) public Set<Role> roles=new HashSet<>();
 }
