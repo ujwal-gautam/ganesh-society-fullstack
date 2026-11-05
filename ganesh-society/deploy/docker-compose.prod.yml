@@ -30,8 +30,9 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/ganesh_society
       DB_USER: ganesh_app
       DB_PASSWORD: ${DB_PASSWORD:?required}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:?required}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      BOOTSTRAP_ENABLED: ${BOOTSTRAP_ENABLED:-false}
+      BOOTSTRAP_EMAIL: ${BOOTSTRAP_EMAIL:-}
+      BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
       CORS_ORIGIN: ${CORS_ORIGIN:?required}
     ports:
       - "127.0.0.1:8080:8080"

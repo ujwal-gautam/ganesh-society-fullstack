@@ -1,0 +1,1 @@
+ALTER TABLE admin_users ADD COLUMN token_version BIGINT NOT NULL DEFAULT 0;

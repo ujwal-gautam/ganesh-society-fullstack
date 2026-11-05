@@ -5,26 +5,24 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:8080";
 const rupee = (n) =>
   "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
-async function request(path, method = "GET", body, credentials) {
+let accessToken = null;
+async function request(path, method = "GET", body, authenticated = false) {
   const headers = { "Content-Type": "application/json" };
-  if (credentials)
-    headers.Authorization =
-      "Basic " + btoa(credentials.email + ":" + credentials.password);
-  const r = await fetch(API + path, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
+  if (authenticated && accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const response = await fetch(API + path, {
+    method, headers,
+    body: body === undefined || body === null ? undefined : JSON.stringify(body),
   });
-  if (!r.ok)
-    throw Error(
-      r.status === 401
-        ? "Invalid login or session"
-        : `Request failed (${r.status})`,
-    );
-  return r.json();
+  if (response.status === 401 && authenticated) accessToken = null;
+  if (!response.ok) throw Error(response.status === 401 ? "Session expired or invalid credentials" :
+    response.status === 403 ? "You do not have permission for this action" : `Request failed (${response.status})`);
+  return response.status === 204 ? null : response.json();
 }
+
 function App() {
-  const [data, setData] = useState(null),
+  const [selectedMember, setSelectedMember] = useState(null),
+    [privateMembers, setPrivateMembers] = useState([]),
+    [data, setData] = useState(null),
     [admin, setAdmin] = useState(false),
     [auth, setAuth] = useState(null),
     [login, setLogin] = useState({ email: "", password: "" }),
@@ -42,11 +40,16 @@ function App() {
     const timer = setInterval(refresh, 15000);
     return () => clearInterval(timer);
   }, []);
+  const can = (permission) => !!auth?.permissions?.includes(permission);
   async function signIn(e) {
     e.preventDefault();
     try {
-      await request("/api/admin/me", "GET", null, login);
-      setAuth({ ...login });
+      const session = await request("/api/auth/login", "POST", login);
+      accessToken = session.accessToken;
+      setAuth(session);
+      if (session.permissions?.includes("MEMBER_VIEW")) {
+        setPrivateMembers(await request("/api/admin/members", "GET", undefined, true));
+      }
       setLogin({ email: "", password: "" });
       setAdmin(true);
       setError("");
@@ -56,8 +59,11 @@ function App() {
   }
   async function save(path, body, method = "POST") {
     try {
-      await request("/api/admin" + path, method, body, auth);
+      await request("/api/admin" + path, method, body, true);
       await refresh();
+      if (accessToken && auth?.permissions?.includes("MEMBER_VIEW")) {
+        setPrivateMembers(await request("/api/admin/members", "GET", undefined, true));
+      }
       setError("");
       alert("Saved successfully");
     } catch (e) {
@@ -71,7 +77,8 @@ function App() {
         <p>Loading… {error}</p>
       </main>
     );
-  const { members, contributions, loans, repayments, settings } = data;
+  const { contributions, loans, repayments, settings } = data;
+  const members = auth && can("MEMBER_VIEW") ? privateMembers : data.members;
   const memberName = (id) =>
     members.find((m) => m.id === id)?.fullName || "Unknown";
   const totalContrib = contributions.reduce((s, c) => s + Number(c.amount), 0);
@@ -202,23 +209,38 @@ function App() {
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Mobile</th>
                   <th>Shares</th>
                   <th>Monthly due</th>
                   <th>Status</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {members.map((m) => (
                   <tr key={m.id}>
                     <td>{m.fullName}</td>
+                    <td>{m.mobileNumber || "Not set"}</td>
                     <td>{m.shares}</td>
                     <td>{rupee(m.shares * settings.monthlyAmountPerShare)}</td>
                     <td>{m.active ? "Active" : "Inactive"}</td>
+                    <td>{auth && can("MEMBER_VIEW") && <button onClick={() => setSelectedMember(m.id)}>View / Edit</button>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+
           </section>
+        )}
+        {selectedMember !== null && auth && (
+          <div className="member-modal-backdrop" onClick={() => setSelectedMember(null)}>
+            <div className="member-modal" role="dialog" aria-modal="true" aria-label="Member details" onClick={e => e.stopPropagation()}>
+              <MemberDetails key={selectedMember}
+                member={members.find(m => Number(m.id) === Number(selectedMember))}
+                can={can} save={save} refresh={refresh}
+                onClose={() => setSelectedMember(null)} />
+            </div>
+          </div>
         )}
         {tab === "contributions" && (
           <section className="panel">
@@ -309,8 +331,11 @@ function App() {
               <div className="adminbar">
                 Logged in as {auth.email}{" "}
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    try { await request("/api/auth/logout", "POST", undefined, true); } catch {}
+                    accessToken = null;
                     setAuth(null);
+                    setPrivateMembers([]);
                     setTab("overview");
                     setAdmin(false);
                   }}
@@ -318,12 +343,8 @@ function App() {
                   Logout
                 </button>
               </div>
-              <AdminForms
-                members={members}
-                loans={loans}
-                settings={settings}
-                save={save}
-              />
+              <AdminForms members={members} loans={loans} settings={settings} save={save} can={can} />
+              {(can("USER_VIEW") || can("ROLE_VIEW")) && <AccessManagement auth={auth} can={can} />}
             </>
           ) : (
             <section className="panel narrow">
@@ -364,8 +385,99 @@ function App() {
     </>
   );
 }
-function AdminForms({ members, loans, settings, save }) {
-  const [member, setMember] = useState({ fullName: "", shares: 1 }),
+
+function MemberDetails({ member, can, save, refresh, onClose }) {
+  const [contributions, setContributions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState({
+    fullName: member?.fullName || "", mobileNumber: member?.mobileNumber || "",
+    shares: member?.shares || 1, active: member?.active ?? true,
+  });
+  const [editing, setEditing] = useState(null);
+  const [correction, setCorrection] = useState({ contributionMonth: "", amount: "", reason: "" });
+  const [changes, setChanges] = useState([]);
+  const [message, setMessage] = useState("");
+  const loadHistory = async () => {
+    if (!member || !can("CONTRIBUTION_VIEW")) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [records, audit] = await Promise.all([
+        request(`/api/admin/members/${member.id}/contributions`, "GET", undefined, true),
+        request(`/api/admin/members/${member.id}/contribution-changes`, "GET", undefined, true)
+      ]);
+      setContributions(records);
+      setChanges(audit);
+      setMessage("");
+    } catch (e) { setMessage(e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { loadHistory(); }, [member?.id]);
+  if (!member) return null;
+  const startEdit = c => {
+    setEditing(c.id);
+    setCorrection({ contributionMonth: c.contributionMonth, amount: String(c.amount), reason: "" });
+  };
+  const submitCorrection = async e => {
+    e.preventDefault();
+    try {
+      await request(`/api/admin/contributions/${editing}`, "PUT", {
+        ...correction, amount: Number(correction.amount)
+      }, true);
+      setEditing(null);
+      setMessage("Contribution updated successfully");
+      await refresh();
+      await loadHistory();
+    } catch (e) { setMessage(e.message); }
+  };
+  return <section className="panel">
+    <h3>Member details: {member.fullName}</h3>
+    <button onClick={onClose}>Close</button>
+    {message && <p role="status">{message}</p>}
+    <div className="fields">
+      <label>Name<input value={profile.fullName} disabled={!can("MEMBER_UPDATE")}
+        onChange={e => setProfile({...profile, fullName:e.target.value})}/></label>
+      <label>Mobile number<input value={profile.mobileNumber} disabled={!can("MEMBER_UPDATE")}
+        onChange={e => setProfile({...profile, mobileNumber:e.target.value})}/></label>
+      <label>Shares<input type="number" min="1" value={profile.shares} disabled={!can("MEMBER_UPDATE")}
+        onChange={e => setProfile({...profile, shares:e.target.value})}/></label>
+      <label>Active<input type="checkbox" checked={profile.active} disabled={!can("MEMBER_UPDATE")}
+        onChange={e => setProfile({...profile, active:e.target.checked})}/></label>
+    </div>
+    {can("MEMBER_UPDATE") && <button onClick={() => save(`/members/${member.id}`, {...profile, shares:Number(profile.shares)}, "PUT")}>Save member</button>}
+    <h3>Monthly contribution history</h3>
+    {loading && <p>Loading contribution history...</p>}
+    {!loading && contributions.length === 0 && <p>No contributions found for this member.</p>}
+    <table><thead><tr><th>Month</th><th>Amount</th><th>Paid on</th><th>Action</th></tr></thead>
+      <tbody>{[...contributions].sort((a,b) => b.contributionMonth.localeCompare(a.contributionMonth)).map(c =>
+        <tr key={c.id}><td>{c.contributionMonth}</td><td>{rupee(c.amount)}</td><td>{c.paidOn}</td>
+          <td>{can("CONTRIBUTION_UPDATE") && <button onClick={() => startEdit(c)}>Edit</button>}</td></tr>
+      )}</tbody>
+    </table>
+    {editing !== null && <form onSubmit={submitCorrection}>
+      <h4>Edit contribution #{editing}</h4>
+      <label>Month<input type="month" required value={correction.contributionMonth}
+        onChange={e => setCorrection({...correction, contributionMonth:e.target.value})}/></label>
+      <label>Amount<input type="number" min="0.01" step="0.01" required value={correction.amount}
+        onChange={e => setCorrection({...correction, amount:e.target.value})}/></label>
+      <label>Reason for change<input required maxLength={500} value={correction.reason}
+        onChange={e => setCorrection({...correction, reason:e.target.value})}/></label>
+      <button type="submit">Save correction</button><button type="button" onClick={() => setEditing(null)}>Cancel</button>
+    </form>}
+    <h3>Contribution correction audit</h3>
+    <table><thead><tr><th>Changed at</th><th>Month (old → new)</th><th>Amount (old → new)</th><th>Admin</th><th>Reason</th></tr></thead>
+      <tbody>{changes.map(change => <tr key={change.id}><td>{change.changedAt}</td>
+        <td>{change.oldMonth} → {change.newMonth}</td>
+        <td>{rupee(change.oldAmount)} → {rupee(change.newAmount)}</td>
+        <td>{change.changedBy}</td><td>{change.reason}</td></tr>)}</tbody>
+    </table>
+  </section>;
+}
+
+function AdminForms({ members, loans, settings, save, can }) {
+  const [member, setMember] = useState({ fullName: "", mobileNumber: "", shares: 1 }),
     [contribution, setContribution] = useState({
       memberId: "",
       contributionMonth: today().slice(0, 7),
@@ -433,17 +545,18 @@ function AdminForms({ members, loans, settings, save }) {
   );
   return (
     <div className="admin-grid">
-      {form(
+      {can("MEMBER_CREATE") && form(
         "New member",
         [
           ["fullName", "Full name", "text"],
+          ["mobileNumber", "Mobile number (10 digits)", "tel"],
           ["shares", "Shares", "number"],
         ],
         member,
         setMember,
         () => save("/members", { ...member, shares: Number(member.shares) }),
       )}
-      {form(
+      {can("CONTRIBUTION_CREATE") && form(
         "Record contribution",
         [
           ["memberId", "Member", "select", members.filter((m) => m.active)],
@@ -460,7 +573,7 @@ function AdminForms({ members, loans, settings, save }) {
             amount: Number(contribution.amount),
           }),
       )}
-      {form(
+      {can("LOAN_CREATE") && form(
         "Issue loan",
         [
           ["memberId", "Member", "select", members.filter((m) => m.active)],
@@ -478,7 +591,7 @@ function AdminForms({ members, loans, settings, save }) {
             termMonths: Number(loan.termMonths),
           }),
       )}
-      {form(
+      {can("LOAN_REPAYMENT_CREATE") && form(
         "Record loan repayment",
         [
           [
@@ -505,7 +618,7 @@ function AdminForms({ members, loans, settings, save }) {
             paidOn: repayment.paidOn,
           }),
       )}
-      {form(
+      {can("SETTINGS_UPDATE") && form(
         "Society settings",
         [
           ["groupName", "Group name", "text"],
@@ -530,5 +643,72 @@ function AdminForms({ members, loans, settings, save }) {
       )}
     </div>
   );
+}
+function AccessManagement({ auth, can }) {
+  const [users, setUsers] = useState([]), [roles, setRoles] = useState([]),
+    [permissions, setPermissions] = useState([]), [error, setError] = useState(""),
+    [newUser, setNewUser] = useState({ fullName: "", email: "", password: "", roleIds: [] }),
+    [newRole, setNewRole] = useState({ name: "", description: "", active: true });
+  const load = async () => {
+    try {
+      if (can("USER_VIEW")) setUsers(await request("/api/admin/users", "GET", null, true));
+      if (can("ROLE_VIEW")) {
+        setRoles(await request("/api/admin/roles", "GET", null, true));
+        setPermissions(await request("/api/admin/permissions", "GET", null, true));
+      }
+      setError("");
+    } catch (e) { setError(e.message); }
+  };
+  useEffect(() => { load(); }, []);
+  const action = async (path, method, body) => {
+    try { await request(path, method, body, true); await load(); }
+    catch (e) { setError(e.message); }
+  };
+  const updateUserRoles = async (u, roleId, checked) => {
+    const ids = roles.filter(r => u.roles.includes(r.name)).map(r => r.id);
+    await action(`/api/admin/users/${u.id}/roles`, "PUT", { ids: checked ? [...new Set([...ids, roleId])] : ids.filter(id => id !== roleId) });
+  };
+  return <div className="admin-grid">
+    {error && <p className="error">{error}</p>}
+    {can("USER_VIEW") && <section className="panel">
+      <h2>Manage users</h2>
+      <div className="users-table-scroll"><table className="users-table">
+        <thead><tr><th>User</th><th>Assigned roles</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>{users.map(u => <tr key={u.id}>
+          <td className="user-identity"><strong>{u.fullName || u.email}</strong><small>{u.email}</small></td>
+          <td><div className="user-role-cell">
+            <div className="user-role-badges">{u.roles.map(role => <span className="user-role-badge" key={role}>{role}</span>)}</div>
+            {can("ROLE_MANAGE") && <div className="user-role-options">{roles.map(r => <label className="user-role-option" key={r.id}>
+              <input type="checkbox" checked={u.roles.includes(r.name)} onChange={e => updateUserRoles(u, r.id, e.target.checked)} />
+              <span>{r.name}</span>
+            </label>)}</div>}
+          </div></td>
+          <td><span className={u.enabled ? "user-status active" : "user-status disabled"}>{u.enabled ? "Active" : "Disabled"}</span></td>
+          <td><div className="user-row-actions">
+            {can("USER_DISABLE") && <button type="button" onClick={() => action(`/api/admin/users/${u.id}/status`,"PATCH",{enabled:!u.enabled})}>{u.enabled ? "Disable" : "Enable"}</button>}
+            {can("USER_UPDATE") && <button className="user-reset-button" type="button" onClick={() => {const password=prompt("Enter new temporary password (12+ characters)"); if(password)action(`/api/admin/users/${u.id}/reset-password`,"POST",{password});}}>Reset password</button>}
+          </div></td>
+        </tr>)}</tbody>
+      </table></div>
+      {can("USER_CREATE") && <form onSubmit={async e => {e.preventDefault();await action("/api/admin/users","POST",newUser);setNewUser({fullName:"",email:"",password:"",roleIds:[]});}}>
+        <h3>Create administrator</h3>
+        <label>Full name<input required value={newUser.fullName} onChange={e=>setNewUser({...newUser,fullName:e.target.value})}/></label>
+        <label>Email<input required type="email" value={newUser.email} onChange={e=>setNewUser({...newUser,email:e.target.value})}/></label>
+        <label>Temporary password<input required minLength={12} type="password" autoComplete="new-password" value={newUser.password} onChange={e=>setNewUser({...newUser,password:e.target.value})}/></label>
+        <label>Role<select required value={newUser.roleIds[0] || ""} onChange={e=>setNewUser({...newUser,roleIds:[Number(e.target.value)]})}><option value="">Select role</option>{roles.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+        <button>Create user</button>
+      </form>}
+    </section>}
+    {can("ROLE_VIEW") && <section className="panel"><h2>Roles and permissions</h2>
+      {roles.map(r=><div key={r.id}><h3>{r.name}</h3><div className="fields">{permissions.map(p=><label key={p.id}>
+        <input type="checkbox" disabled={!can("ROLE_MANAGE") || r.name==="SUPER_ADMIN"} checked={r.permissionIds.includes(p.id)} onChange={e=>action(`/api/admin/roles/${r.id}/permissions`,"PUT",{ids:e.target.checked?[...r.permissionIds,p.id]:r.permissionIds.filter(id=>id!==p.id)})}/> {p.code}
+      </label>)}</div></div>)}
+      {can("ROLE_MANAGE") && <form onSubmit={async e=>{e.preventDefault();await action("/api/admin/roles","POST",newRole);setNewRole({name:"",description:"",active:true});}}>
+        <h3>Create role</h3><label>Name<input required value={newRole.name} onChange={e=>setNewRole({...newRole,name:e.target.value})}/></label>
+        <label>Description<input value={newRole.description} onChange={e=>setNewRole({...newRole,description:e.target.value})}/></label>
+        <button>Create role</button>
+      </form>}
+    </section>}
+  </div>;
 }
 createRoot(document.getElementById("root")).render(<App />);

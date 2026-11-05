@@ -5,22 +5,15 @@ docker compose -f docker-compose.prod.yml up -d
 
 docker compose -f docker-compose.prod.yml ps
 
-local EC2 API URL:- curl -i http://127.0.0.1:8080/api/public/snapshot
-public API URL:- https://ganesh-society-api.duckdns.org/api/public/snapshot
-
-DOCKERHUB_USERNAME=ujwalgautam
-IMAGE_TAG=latest
-
-DB_PASSWORD=Ganesh@1234G
-MYSQL_ROOT_PASSWORD=Ganesh@1234G
-
-ADMIN_EMAIL=ujwalgautam66@gmail.com
-ADMIN_PASSWORD=Ganesh@1234G
-
-CORS_ORIGIN=https://your-project.pages.dev
+curl -i http://127.0.0.1:8080/api/public/snapshot
 
 log check: docker compose -f docker-compose.prod.yml logs --tail=100 backend
 
 
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
+
+//when update deployment config in EC2 then should existing below command
+cd /opt/ganesh-society
+sudo nano docker-compose.prod.yml
+sudo nano .env
