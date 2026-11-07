@@ -5,5 +5,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.*;
 
 public interface ContributionRepository extends JpaRepository<Contribution, Long> {
-    List<Contribution> findByMemberIdOrderByContributionMonthDescPaidOnDesc(Long memberId);
+    List<Contribution> findByDeletedAtIsNull();
+    List<Contribution> findByMemberIdAndDeletedAtIsNullOrderByContributionMonthDescPaidOnDesc(Long memberId);
 }

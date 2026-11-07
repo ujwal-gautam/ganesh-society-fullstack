@@ -43,3 +43,7 @@
 .member-add-contribution-note { color:#53645a; font-size:12px; }
 .member-contribution-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
 .member-contribution-actions button:disabled { opacity:.6; cursor:not-allowed; }
+
+.contribution-delete-button{background:#a42d35;color:#fff;border:1px solid #a42d35}
+.contribution-delete-button:hover:not(:disabled){background:#842027}
+.contribution-delete-button:disabled{opacity:.6;cursor:not-allowed}

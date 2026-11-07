@@ -437,6 +437,22 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
     } catch (e) { setMessage(e.message); }
     finally { setSavingContribution(false); }
   };
+  const canDeleteContribution = can("CONTRIBUTION_DELETE") &&
+    (roles.includes("ADMIN") || roles.includes("SUPER_ADMIN"));
+  const [deletingContribution, setDeletingContribution] = useState(null);
+  const deleteContribution = async c => {
+    if (!canDeleteContribution || deletingContribution !== null) return;
+    if (!window.confirm(`Delete the ${c.contributionMonth} contribution of ${rupee(c.amount)} for ${member.fullName}? This will remove it from active records and totals.`)) return;
+    setDeletingContribution(c.id);
+    try {
+      await request(`/api/admin/contributions/${c.id}`, "DELETE", undefined, true);
+      if (editing === c.id) setEditing(null);
+      await refresh();
+      await loadHistory();
+      setMessage("Monthly contribution deleted successfully.");
+    } catch (e) { setMessage(e.message); }
+    finally { setDeletingContribution(null); }
+  };
   const [editing, setEditing] = useState(null);
   const [correction, setCorrection] = useState({ contributionMonth: "", amount: "", reason: "" });
   const [changes, setChanges] = useState([]);
@@ -526,7 +542,13 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
     <table><thead><tr><th>Month</th><th>Amount</th><th>Paid on</th><th>Action</th></tr></thead>
       <tbody>{[...contributions].sort((a,b) => b.contributionMonth.localeCompare(a.contributionMonth)).map(c =>
         <tr key={c.id}><td>{c.contributionMonth}</td><td>{rupee(c.amount)}</td><td>{c.paidOn}</td>
-          <td>{can("CONTRIBUTION_UPDATE") && <button onClick={() => startEdit(c)}>Edit</button>}</td></tr>
+          <td><div className="member-contribution-actions">
+            {can("CONTRIBUTION_UPDATE") && <button type="button" onClick={() => startEdit(c)}>Edit</button>}
+            {canDeleteContribution && <button type="button" className="contribution-delete-button"
+              disabled={deletingContribution !== null} onClick={() => deleteContribution(c)}>
+              {deletingContribution === c.id ? "Deleting..." : "Delete"}
+            </button>}
+          </div></td></tr>
       )}</tbody>
     </table>
     {editing !== null && <form onSubmit={submitCorrection}>
