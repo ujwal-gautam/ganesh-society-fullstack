@@ -8,6 +8,7 @@ import java.util.*;
  @Column(unique=true,nullable=false) public String email;
  @Column(name="password_hash",nullable=false) public String passwordHash;
  @Column(name="full_name") public String fullName;
+ @Column(name="mobile_number",length=10,unique=true) public String mobileNumber;
  // Legacy column retained for backward-compatible database migration.
  public String role="ADMIN";
  public boolean enabled=true;

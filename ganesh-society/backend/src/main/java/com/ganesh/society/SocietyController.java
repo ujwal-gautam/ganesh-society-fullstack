@@ -43,7 +43,7 @@ public class SocietyController {
             safe.active = member.active;
             return safe;
         }).toList();
-        return new Snapshot(publicMembers, contributions.findAll(), loans.findAll(), repayments.findAll(), settings.findAll().stream().findFirst().orElseThrow());
+        return new Snapshot(publicMembers, contributions.findByDeletedAtIsNull(), loans.findAll(), repayments.findAll(), settings.findAll().stream().findFirst().orElseThrow());
     }
 
     @GetMapping("/api/admin/me")
@@ -69,7 +69,7 @@ public class SocietyController {
     @PreAuthorize("hasAuthority('CONTRIBUTION_VIEW')")
     public List<Contribution> memberContributions(@PathVariable Long id) {
         if (!members.existsById(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
-        return contributions.findByMemberIdOrderByContributionMonthDescPaidOnDesc(id);
+        return contributions.findByMemberIdAndDeletedAtIsNullOrderByContributionMonthDescPaidOnDesc(id);
     }
 
     @GetMapping("/api/admin/members/{id}/contribution-changes")
@@ -82,7 +82,7 @@ public class SocietyController {
     @GetMapping("/api/admin/contributions/{id}/history")
     @PreAuthorize("hasAuthority('CONTRIBUTION_VIEW')")
     public List<ContributionChange> contributionHistory(@PathVariable Long id) {
-        if (!contributions.existsById(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        if (contributions.findById(id).filter(c -> c.deletedAt == null).isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         return changes.findByContributionIdOrderByIdDesc(id);
     }
 
@@ -94,7 +94,7 @@ public class SocietyController {
     public Contribution updateContribution(@PathVariable Long id,
                                            @RequestBody ContributionCorrection body,
                                            Authentication auth) {
-        Contribution old = contributions.findById(id)
+        Contribution old = contributions.findById(id).filter(c -> c.deletedAt == null)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         if (!month(body.contributionMonth()) || body.amount() == null ||
                 body.amount().signum() <= 0 || body.amount().scale() > 2 ||
@@ -115,6 +115,19 @@ public class SocietyController {
         old.contributionMonth = body.contributionMonth();
         old.amount = body.amount();
         return contributions.save(old);
+    }
+
+    @DeleteMapping("/api/admin/contributions/{id}")
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_SUPER_ADMIN') and hasAuthority('CONTRIBUTION_DELETE')")
+    @Transactional
+    public ResponseEntity<Void> deleteContribution(@PathVariable Long id, Authentication auth) {
+        Contribution contribution = contributions.findById(id)
+                .filter(c -> c.deletedAt == null)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Contribution not found"));
+        contribution.deletedAt = java.time.Instant.now();
+        contribution.deletedBy = auth.getName();
+        contributions.save(contribution);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/api/admin/members")
@@ -144,11 +157,13 @@ public class SocietyController {
     }
 
     @PostMapping("/api/admin/contributions")
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_SUPER_ADMIN') and hasAuthority('CONTRIBUTION_CREATE')")
     public Contribution contribution(@RequestBody Contribution c) {
-        if (c.id != null || !members.existsById(c.memberId) || c.amount == null || c.amount.signum() <= 0 || c.paidOn == null || !month(c.contributionMonth))
+        if (c.id != null || c.memberId == null || !members.existsById(c.memberId) || c.amount == null || c.amount.signum() <= 0 || c.paidOn == null || !month(c.contributionMonth))
             throw bad();
         return contributions.save(c);
     }
+
 
     @PostMapping("/api/admin/loans")
     public Loan loan(@RequestBody Loan l) {

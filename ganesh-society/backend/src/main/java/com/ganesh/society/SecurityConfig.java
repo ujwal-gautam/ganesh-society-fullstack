@@ -52,6 +52,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/api/admin/members/**").hasAuthority("MEMBER_UPDATE")
                         .requestMatchers(HttpMethod.POST, "/api/admin/contributions").hasAuthority("CONTRIBUTION_CREATE")
                         .requestMatchers(HttpMethod.PUT, "/api/admin/contributions/*").hasAuthority("CONTRIBUTION_UPDATE")
+                        .requestMatchers(HttpMethod.DELETE, "/api/admin/contributions/*").hasAuthority("CONTRIBUTION_DELETE")
                         .requestMatchers(HttpMethod.GET, "/api/admin/members/*/contributions", "/api/admin/members/*/contribution-changes", "/api/admin/contributions/*/history").hasAuthority("CONTRIBUTION_VIEW")
                         .requestMatchers(HttpMethod.POST, "/api/admin/loans").hasAuthority("LOAN_CREATE")
                         .requestMatchers(HttpMethod.POST, "/api/admin/loans/*/repayments").hasAuthority("LOAN_REPAYMENT_CREATE")

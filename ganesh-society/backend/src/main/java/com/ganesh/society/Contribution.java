@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.Instant;
 
 @Entity
 @Table(name = "contributions")
@@ -19,4 +20,8 @@ public class Contribution {
     @Column(name = "paid_on")
     public LocalDate paidOn;
     public String notes;
+    @Column(name = "deleted_at")
+    public Instant deletedAt;
+    @Column(name = "deleted_by")
+    public String deletedBy;
 }
