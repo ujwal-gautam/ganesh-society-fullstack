@@ -256,26 +256,31 @@ function App() {
         {tab === "contributions" && (
           <section className="panel">
             <h2>Contribution ledger</h2>
+            <p className="muted">One row per member, showing the total of all active monthly contributions. Open Members → View/Edit to see individual payments.</p>
             <table>
               <thead>
                 <tr>
                   <th>Member</th>
-                  <th>Month</th>
-                  <th>Amount</th>
-                  <th>Date</th>
+                  <th>Total contribution</th>
                 </tr>
               </thead>
               <tbody>
-                {[...contributions]
-                  .sort((a, b) => b.paidOn.localeCompare(a.paidOn))
-                  .map((c) => (
-                    <tr key={c.id}>
-                      <td>{memberName(c.memberId)}</td>
-                      <td>{c.contributionMonth}</td>
-                      <td>{rupee(c.amount)}</td>
-                      <td>{c.paidOn}</td>
+                {Object.values(contributions.reduce((totals, c) => {
+                  const id = String(c.memberId);
+                  if (!totals[id]) totals[id] = { memberId: c.memberId, total: 0 };
+                  totals[id].total += Number(c.amount) || 0;
+                  return totals;
+                }, {}))
+                  .sort((a, b) => memberName(a.memberId).localeCompare(memberName(b.memberId)))
+                  .map(({ memberId, total }) => (
+                    <tr key={memberId}>
+                      <td>{memberName(memberId)}</td>
+                      <td>{rupee(total)}</td>
                     </tr>
                   ))}
+                {contributions.length === 0 && (
+                  <tr><td colSpan={2}>No contributions recorded yet.</td></tr>
+                )}
               </tbody>
             </table>
           </section>
