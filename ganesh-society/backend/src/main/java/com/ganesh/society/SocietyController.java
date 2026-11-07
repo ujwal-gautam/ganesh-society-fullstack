@@ -144,11 +144,13 @@ public class SocietyController {
     }
 
     @PostMapping("/api/admin/contributions")
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_SUPER_ADMIN') and hasAuthority('CONTRIBUTION_CREATE')")
     public Contribution contribution(@RequestBody Contribution c) {
-        if (c.id != null || !members.existsById(c.memberId) || c.amount == null || c.amount.signum() <= 0 || c.paidOn == null || !month(c.contributionMonth))
+        if (c.id != null || c.memberId == null || !members.existsById(c.memberId) || c.amount == null || c.amount.signum() <= 0 || c.paidOn == null || !month(c.contributionMonth))
             throw bad();
         return contributions.save(c);
     }
+
 
     @PostMapping("/api/admin/loans")
     public Loan loan(@RequestBody Loan l) {

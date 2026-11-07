@@ -4,7 +4,18 @@ import "./style.css";
 const API = import.meta.env.VITE_API_URL || "http://localhost:8080";
 const rupee = (n) =>
   "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const parts = new Intl.DateTimeFormat("en-US", {timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
+  const get = (key) => parts.find(p => p.type === key).value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+};
+const monthOffset = (offset) => {
+  const parts = new Intl.DateTimeFormat("en-US", {timeZone:"Asia/Kolkata",year:"numeric",month:"numeric"}).formatToParts(new Date());
+  const year = Number(parts.find(p=>p.type==="year").value);
+  const month = Number(parts.find(p=>p.type==="month").value);
+  const date = new Date(Date.UTC(year, month - 1 + offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,"0")}`;
+};
 let accessToken = null;
 async function request(path, method = "GET", body, authenticated = false) {
   const headers = { "Content-Type": "application/json" };
@@ -237,7 +248,7 @@ function App() {
             <div className="member-modal" role="dialog" aria-modal="true" aria-label="Member details" onClick={e => e.stopPropagation()}>
               <MemberDetails key={selectedMember}
                 member={members.find(m => Number(m.id) === Number(selectedMember))}
-                can={can} save={save} refresh={refresh}
+                roles={auth.roles || []} can={can} save={save} refresh={refresh}
                 onClose={() => setSelectedMember(null)} />
             </div>
           </div>
@@ -343,7 +354,7 @@ function App() {
                   Logout
                 </button>
               </div>
-              <AdminForms members={members} loans={loans} settings={settings} save={save} can={can} />
+              <AdminForms members={members} loans={loans} settings={settings} save={save} can={can} roles={auth?.roles || []} />
               {(can("USER_VIEW") || can("ROLE_VIEW")) && <AccessManagement auth={auth} can={can} />}
             </>
           ) : (
@@ -386,13 +397,46 @@ function App() {
   );
 }
 
-function MemberDetails({ member, can, save, refresh, onClose }) {
+function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
   const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState({
     fullName: member?.fullName || "", mobileNumber: member?.mobileNumber || "",
     shares: member?.shares || 1, active: member?.active ?? true,
   });
+  const [showAddContribution, setShowAddContribution] = useState(false);
+  const [newContribution, setNewContribution] = useState({ contributionDate: today(), amount: "" });
+  const [savingContribution, setSavingContribution] = useState(false);
+  const canAddContribution = can("CONTRIBUTION_CREATE") &&
+    (roles.includes("ADMIN") || roles.includes("SUPER_ADMIN"));
+  const submitNewContribution = async e => {
+    e.preventDefault();
+    if (!canAddContribution || savingContribution) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newContribution.contributionDate) ||
+        Number.isNaN(Date.parse(newContribution.contributionDate))) {
+      setMessage("Select a valid contribution date.");
+      return;
+    }
+    if (!Number.isFinite(Number(newContribution.amount)) || Number(newContribution.amount) <= 0) {
+      setMessage("Enter an amount greater than zero.");
+      return;
+    }
+    setSavingContribution(true);
+    try {
+      await request("/api/admin/contributions", "POST", {
+        memberId: Number(member.id),
+        contributionMonth: newContribution.contributionDate.slice(0, 7),
+        amount: Number(newContribution.amount),
+        paidOn: newContribution.contributionDate,
+      }, true);
+      setShowAddContribution(false);
+      setNewContribution({ contributionDate: today(), amount: "" });
+      await refresh();
+      await loadHistory();
+      setMessage("Monthly contribution added successfully.");
+    } catch (e) { setMessage(e.message); }
+    finally { setSavingContribution(false); }
+  };
   const [editing, setEditing] = useState(null);
   const [correction, setCorrection] = useState({ contributionMonth: "", amount: "", reason: "" });
   const [changes, setChanges] = useState([]);
@@ -447,7 +491,36 @@ function MemberDetails({ member, can, save, refresh, onClose }) {
         onChange={e => setProfile({...profile, active:e.target.checked})}/></label>
     </div>
     {can("MEMBER_UPDATE") && <button onClick={() => save(`/members/${member.id}`, {...profile, shares:Number(profile.shares)}, "PUT")}>Save member</button>}
-    <h3>Monthly contribution history</h3>
+    <div className="member-contribution-heading">
+      <h3>Monthly contribution history</h3>
+      {canAddContribution && <button type="button" onClick={() => { setShowAddContribution(v => !v); setMessage(""); }}>
+        {showAddContribution ? "Cancel adding" : "+ Add monthly record"}
+      </button>}
+    </div>
+    {showAddContribution && canAddContribution && <form className="member-add-contribution-card" onSubmit={submitNewContribution}>
+      <h4>Add monthly contribution</h4>
+      <div className="fields">
+        <label>Member name
+          <input value={member.fullName} readOnly aria-label="Member name" />
+        </label>
+        <label>Date (day / month / year)
+          <input type="date" required
+            value={newContribution.contributionDate}
+            onChange={e => setNewContribution({...newContribution, contributionDate:e.target.value})} />
+        </label>
+        <label>Amount (₹)
+          <input type="number" min="0.01" step="0.01" required placeholder="Enter amount"
+            value={newContribution.amount}
+            onChange={e => setNewContribution({...newContribution, amount:e.target.value})} />
+        </label>
+      </div>
+      <p className="member-add-contribution-note">Choose any valid date. The contribution month and payment date are saved from the selected date.</p>
+      <div className="member-contribution-actions">
+        <button type="submit" disabled={savingContribution}>{savingContribution ? "Saving..." : "Save monthly record"}</button>
+        <button type="button" onClick={() => setShowAddContribution(false)} disabled={savingContribution}>Cancel</button>
+      </div>
+    </form>}
+
     {loading && <p>Loading contribution history...</p>}
     {!loading && contributions.length === 0 && <p>No contributions found for this member.</p>}
     <table><thead><tr><th>Month</th><th>Amount</th><th>Paid on</th><th>Action</th></tr></thead>
@@ -476,11 +549,11 @@ function MemberDetails({ member, can, save, refresh, onClose }) {
   </section>;
 }
 
-function AdminForms({ members, loans, settings, save, can }) {
+function AdminForms({ members, loans, settings, save, can, roles }) {
   const [member, setMember] = useState({ fullName: "", mobileNumber: "", shares: 1 }),
     [contribution, setContribution] = useState({
       memberId: "",
-      contributionMonth: today().slice(0, 7),
+      contributionMonth: monthOffset(0),
       amount: "",
       paidOn: today(),
     }),
@@ -556,7 +629,7 @@ function AdminForms({ members, loans, settings, save, can }) {
         setMember,
         () => save("/members", { ...member, shares: Number(member.shares) }),
       )}
-      {can("CONTRIBUTION_CREATE") && form(
+      {can("CONTRIBUTION_CREATE") && roles.some(r => r === "ADMIN" || r === "SUPER_ADMIN") && form(
         "Record contribution",
         [
           ["memberId", "Member", "select", members.filter((m) => m.active)],
@@ -566,12 +639,11 @@ function AdminForms({ members, loans, settings, save, can }) {
         ],
         contribution,
         setContribution,
-        () =>
-          save("/contributions", {
-            ...contribution,
-            memberId: Number(contribution.memberId),
-            amount: Number(contribution.amount),
-          }),
+        () => save("/contributions", {
+          ...contribution,
+          memberId: Number(contribution.memberId),
+          amount: Number(contribution.amount),
+        }),
       )}
       {can("LOAN_CREATE") && form(
         "Issue loan",
@@ -647,7 +719,7 @@ function AdminForms({ members, loans, settings, save, can }) {
 function AccessManagement({ auth, can }) {
   const [users, setUsers] = useState([]), [roles, setRoles] = useState([]),
     [permissions, setPermissions] = useState([]), [error, setError] = useState(""),
-    [newUser, setNewUser] = useState({ fullName: "", email: "", password: "", roleIds: [] }),
+    [newUser, setNewUser] = useState({ fullName: "", email: "", mobileNumber: "", password: "", roleIds: [] }),
     [newRole, setNewRole] = useState({ name: "", description: "", active: true });
   const load = async () => {
     try {
@@ -675,7 +747,7 @@ function AccessManagement({ auth, can }) {
       <div className="users-table-scroll"><table className="users-table">
         <thead><tr><th>User</th><th>Assigned roles</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>{users.map(u => <tr key={u.id}>
-          <td className="user-identity"><strong>{u.fullName || u.email}</strong><small>{u.email}</small></td>
+          <td className="user-identity"><strong>{u.fullName || u.email}</strong><small>{u.email}</small><small>{u.mobileNumber || "Mobile not set"}</small></td>
           <td><div className="user-role-cell">
             <div className="user-role-badges">{u.roles.map(role => <span className="user-role-badge" key={role}>{role}</span>)}</div>
             {can("ROLE_MANAGE") && <div className="user-role-options">{roles.map(r => <label className="user-role-option" key={r.id}>
@@ -690,10 +762,11 @@ function AccessManagement({ auth, can }) {
           </div></td>
         </tr>)}</tbody>
       </table></div>
-      {can("USER_CREATE") && <form onSubmit={async e => {e.preventDefault();await action("/api/admin/users","POST",newUser);setNewUser({fullName:"",email:"",password:"",roleIds:[]});}}>
+      {can("USER_CREATE") && <form onSubmit={async e => {e.preventDefault();await action("/api/admin/users","POST",newUser);setNewUser({fullName:"",email:"",mobileNumber:"",password:"",roleIds:[]});}}>
         <h3>Create administrator</h3>
         <label>Full name<input required value={newUser.fullName} onChange={e=>setNewUser({...newUser,fullName:e.target.value})}/></label>
         <label>Email<input required type="email" value={newUser.email} onChange={e=>setNewUser({...newUser,email:e.target.value})}/></label>
+        <label>Mobile number<input required type="tel" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} placeholder="10-digit mobile number" value={newUser.mobileNumber} onChange={e=>setNewUser({...newUser,mobileNumber:e.target.value})}/></label>
         <label>Temporary password<input required minLength={12} type="password" autoComplete="new-password" value={newUser.password} onChange={e=>setNewUser({...newUser,password:e.target.value})}/></label>
         <label>Role<select required value={newUser.roleIds[0] || ""} onChange={e=>setNewUser({...newUser,roleIds:[Number(e.target.value)]})}><option value="">Select role</option>{roles.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
         <button>Create user</button>

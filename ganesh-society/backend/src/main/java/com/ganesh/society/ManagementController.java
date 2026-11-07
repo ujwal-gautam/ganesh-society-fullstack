@@ -31,10 +31,10 @@ public class ManagementController {
     }
 
     record CreateUser(@NotBlank @Email String email, @NotBlank String fullName,
-                      @NotBlank @Size(min = 12) String password, Set<Long> roleIds) {
+                      @NotBlank @Size(min = 12) String password, Set<Long> roleIds, String mobileNumber) {
     }
 
-    record UpdateUser(@NotBlank String fullName, @NotBlank @Email String email) {
+    record UpdateUser(@NotBlank String fullName, @NotBlank @Email String email, String mobileNumber) {
     }
 
     record Status(boolean enabled) {
@@ -47,6 +47,13 @@ public class ManagementController {
     }
 
     record ResetPassword(@NotBlank @Size(min = 12) String password) {
+    }
+
+    private String normalizeAdminMobile(String input) {
+        if (input == null || input.isBlank()) throw bad("Mobile number is required");
+        String value = input.trim();
+        if (!value.matches("[6-9][0-9]{9}")) throw bad("Enter a valid 10-digit Indian mobile number");
+        return value;
     }
 
     private ResponseStatusException bad(String msg) {
@@ -91,6 +98,7 @@ public class ManagementController {
     private Map<String, Object> dto(AdminUser u) {
         Map<String, Object> m = new LinkedHashMap<>(tokens.profile(u));
         m.put("enabled", u.enabled);
+        m.put("mobileNumber", u.mobileNumber == null ? "" : u.mobileNumber);
         m.put("lastLoginAt", u.lastLoginAt);
         return m;
     }
@@ -118,6 +126,9 @@ public class ManagementController {
         AdminUser u = new AdminUser();
         u.email = email;
         u.fullName = body.fullName();
+        u.mobileNumber = normalizeAdminMobile(body.mobileNumber());
+        if (users.existsByMobileNumber(u.mobileNumber))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Mobile number already exists");
         u.passwordHash = encoder.encode(body.password());
         u.roles = resolveRoles(body.roleIds());
         if (u.roles.isEmpty()) throw bad("Assign a role");
@@ -141,6 +152,11 @@ public class ManagementController {
         if (!Objects.equals(u.email, email)) invalidateTokens(u);
         u.email = email;
         u.fullName = body.fullName();
+        // Existing users may not have a mobile number; updates require a valid one.
+        String mobile = normalizeAdminMobile(body.mobileNumber());
+        if (users.existsByMobileNumberAndIdNot(mobile, id))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Mobile number already exists");
+        u.mobileNumber = mobile;
         tokens.audit(actor(auth).id, "USER_UPDATE", id.toString());
         return dto(u);
     }

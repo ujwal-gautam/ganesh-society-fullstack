@@ -33,3 +33,13 @@
 .user-row-actions .user-reset-button { background: #e9efec; color: #0f3d3e; }
 .user-row-actions .user-reset-button:hover { background: #d6e4dc; }
 @media(max-width:650px) { .users-table th, .users-table td { white-space: normal; } .users-table-scroll { margin-bottom: 12px; } }
+
+.member-contribution-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:20px; margin-bottom:12px; }
+.member-contribution-heading h3 { margin:0; }
+.member-add-contribution-card { border:1px solid #c7d7ce; background:#f6fbf7; padding:18px; border-radius:12px; margin:14px 0 20px; }
+.member-add-contribution-card h4 { margin:0 0 12px; font-size:17px; }
+.member-add-contribution-card .fields { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+.member-add-contribution-card input[readonly] { background:#e9efeb; color:#374d42; }
+.member-add-contribution-note { color:#53645a; font-size:12px; }
+.member-contribution-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+.member-contribution-actions button:disabled { opacity:.6; cursor:not-allowed; }
