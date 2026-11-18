@@ -22,4 +22,6 @@ public class LoanRepayment {
     @Column(name = "interest_component")
     public BigDecimal interestComponent;
     public String notes;
+    @Column(name = "contribution_id")
+    public Long contributionId;
 }

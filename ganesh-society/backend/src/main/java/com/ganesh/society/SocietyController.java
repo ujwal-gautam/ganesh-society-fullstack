@@ -72,6 +72,59 @@ public class SocietyController {
         return contributions.findByMemberIdAndDeletedAtIsNullOrderByContributionMonthDescPaidOnDesc(id);
     }
 
+    @GetMapping("/api/admin/members/{id}/loan-summary")
+    @PreAuthorize("hasAuthority('MEMBER_VIEW')")
+    public MemberLoanSummary memberLoanSummary(@PathVariable Long id) {
+        if (!members.existsById(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        var memberLoans = loans.findByMemberIdOrderByIssuedOnAscIdAsc(id);
+        var loanIds = memberLoans.stream().map(l -> l.id).collect(java.util.stream.Collectors.toSet());
+        var memberPayments = repayments.findAll().stream().filter(r -> loanIds.contains(r.loanId)).toList();
+        BigDecimal issued = memberLoans.stream().map(l -> l.principal).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal principal = memberPayments.stream().map(r -> r.principalComponent).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal interest = memberPayments.stream().map(r -> r.interestComponent).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new MemberLoanSummary(issued, principal, issued.subtract(principal), interest);
+    }
+
+    private BigDecimal nonnegativeMoney(BigDecimal value) {
+        BigDecimal result = value == null ? BigDecimal.ZERO : value;
+        if (result.signum() < 0 || result.scale() > 2) throw bad();
+        return result;
+    }
+
+    // A contribution-linked repayment is allocated to the oldest outstanding loan first.
+    // Both amounts are recorded separately; only principal reduces outstanding loan balance.
+    private void syncContributionLoanPayments(Contribution c) {
+        repayments.deleteAll(repayments.findByContributionId(c.id));
+        repayments.flush();
+        BigDecimal principal = nonnegativeMoney(c.loanReceived);
+        BigDecimal interest = nonnegativeMoney(c.loanInterest);
+        if (principal.signum() == 0 && interest.signum() == 0) return;
+        var memberLoans = loans.findByMemberIdOrderByIssuedOnAscIdAsc(c.memberId);
+        if (memberLoans.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Member has no loan");
+        var existing = repayments.findAll();
+        for (Loan loan : memberLoans) {
+            BigDecimal paid = existing.stream().filter(r -> loan.id.equals(r.loanId))
+                .map(r -> r.principalComponent).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal outstanding = loan.principal.subtract(paid);
+            if (outstanding.signum() < 0) throw bad();
+            BigDecimal allocation = principal.min(outstanding);
+            if (allocation.signum() == 0 && (interest.signum() == 0 || !loan.id.equals(memberLoans.get(0).id))) continue;
+            LoanRepayment repayment = new LoanRepayment();
+            repayment.loanId = loan.id;
+            repayment.contributionId = c.id;
+            repayment.paidOn = c.paidOn;
+            repayment.principalComponent = allocation;
+            repayment.interestComponent = interest;
+            repayment.receivedAmount = allocation.add(interest);
+            repayment.notes = "Monthly contribution #" + c.id;
+            repayments.save(repayment);
+            principal = principal.subtract(allocation);
+            interest = BigDecimal.ZERO;
+            if (principal.signum() == 0) break;
+        }
+        if (principal.signum() > 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Loan received exceeds outstanding principal");
+    }
+
     @GetMapping("/api/admin/members/{id}/contribution-changes")
     @PreAuthorize("hasAuthority('CONTRIBUTION_VIEW')")
     public List<ContributionChange> memberChanges(@PathVariable Long id) {
@@ -86,10 +139,10 @@ public class SocietyController {
         return changes.findByContributionIdOrderByIdDesc(id);
     }
 
-    record ContributionCorrection(String contributionMonth, BigDecimal amount, String reason) {}
+    record ContributionCorrection(String contributionMonth, BigDecimal amount, String reason, BigDecimal loanReceived, BigDecimal loanInterest) {}
 
     @PutMapping("/api/admin/contributions/{id}")
-    @PreAuthorize("hasAuthority('CONTRIBUTION_UPDATE')")
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_SUPER_ADMIN') and hasAuthority('CONTRIBUTION_UPDATE')")
     @Transactional
     public Contribution updateContribution(@PathVariable Long id,
                                            @RequestBody ContributionCorrection body,
@@ -100,8 +153,12 @@ public class SocietyController {
                 body.amount().signum() <= 0 || body.amount().scale() > 2 ||
                 body.reason() == null || body.reason().isBlank() || body.reason().length() > 500)
             throw bad();
+        BigDecimal received = nonnegativeMoney(body.loanReceived());
+        BigDecimal interest = nonnegativeMoney(body.loanInterest());
         if (Objects.equals(old.contributionMonth, body.contributionMonth()) &&
-                old.amount.compareTo(body.amount()) == 0) return old;
+                old.amount.compareTo(body.amount()) == 0 &&
+                nonnegativeMoney(old.loanReceived).compareTo(received) == 0 &&
+                nonnegativeMoney(old.loanInterest).compareTo(interest) == 0) return old;
         ContributionChange change = new ContributionChange();
         change.contributionId = old.id;
         change.memberId = old.memberId;
@@ -109,12 +166,20 @@ public class SocietyController {
         change.newMonth = body.contributionMonth();
         change.oldAmount = old.amount;
         change.newAmount = body.amount();
+        change.oldLoanReceived = nonnegativeMoney(old.loanReceived);
+        change.newLoanReceived = received;
+        change.oldLoanInterest = nonnegativeMoney(old.loanInterest);
+        change.newLoanInterest = interest;
         change.changedBy = auth.getName();
         change.reason = body.reason().trim();
         changes.save(change);
         old.contributionMonth = body.contributionMonth();
         old.amount = body.amount();
-        return contributions.save(old);
+        old.loanReceived = received;
+        old.loanInterest = interest;
+        contributions.save(old);
+        syncContributionLoanPayments(old);
+        return old;
     }
 
     @DeleteMapping("/api/admin/contributions/{id}")
@@ -124,6 +189,9 @@ public class SocietyController {
         Contribution contribution = contributions.findById(id)
                 .filter(c -> c.deletedAt == null)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Contribution not found"));
+        if (!repayments.findByContributionId(id).isEmpty()) {
+            repayments.deleteAll(repayments.findByContributionId(id));
+        }
         contribution.deletedAt = java.time.Instant.now();
         contribution.deletedBy = auth.getName();
         contributions.save(contribution);
@@ -158,10 +226,17 @@ public class SocietyController {
 
     @PostMapping("/api/admin/contributions")
     @PreAuthorize("hasAnyAuthority('ROLE_ADMIN','ROLE_SUPER_ADMIN') and hasAuthority('CONTRIBUTION_CREATE')")
+    @Transactional
     public Contribution contribution(@RequestBody Contribution c) {
-        if (c.id != null || c.memberId == null || !members.existsById(c.memberId) || c.amount == null || c.amount.signum() <= 0 || c.paidOn == null || !month(c.contributionMonth))
+        if (c.id != null || c.memberId == null || !members.existsById(c.memberId) || c.amount == null || c.amount.signum() <= 0 || c.amount.scale() > 2 || c.paidOn == null || !month(c.contributionMonth))
             throw bad();
-        return contributions.save(c);
+        c.loanReceived = nonnegativeMoney(c.loanReceived);
+        c.loanInterest = nonnegativeMoney(c.loanInterest);
+        c.deletedAt = null;
+        c.deletedBy = null;
+        contributions.saveAndFlush(c);
+        syncContributionLoanPayments(c);
+        return c;
     }
 
 

@@ -21,6 +21,14 @@ public class ContributionChange {
     public BigDecimal oldAmount;
     @Column(name = "new_amount", nullable = false)
     public BigDecimal newAmount;
+    @Column(name = "old_loan_received")
+    public BigDecimal oldLoanReceived;
+    @Column(name = "new_loan_received")
+    public BigDecimal newLoanReceived;
+    @Column(name = "old_loan_interest")
+    public BigDecimal oldLoanInterest;
+    @Column(name = "new_loan_interest")
+    public BigDecimal newLoanInterest;
     @Column(name = "changed_by", nullable = false)
     public String changedBy;
     @Column(name = "reason", nullable = false)
