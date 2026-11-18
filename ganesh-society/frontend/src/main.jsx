@@ -404,13 +404,14 @@ function App() {
 
 function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
   const [contributions, setContributions] = useState([]);
+  const [loanSummary, setLoanSummary] = useState({issued:0,received:0,outstanding:0,interest:0});
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState({
     fullName: member?.fullName || "", mobileNumber: member?.mobileNumber || "",
     shares: member?.shares || 1, active: member?.active ?? true,
   });
   const [showAddContribution, setShowAddContribution] = useState(false);
-  const [newContribution, setNewContribution] = useState({ contributionDate: today(), amount: "" });
+  const [newContribution, setNewContribution] = useState({ contributionDate: today(), amount: "", loanReceived: "0.00", loanInterest: "0.00" });
   const [savingContribution, setSavingContribution] = useState(false);
   const canAddContribution = can("CONTRIBUTION_CREATE") &&
     (roles.includes("ADMIN") || roles.includes("SUPER_ADMIN"));
@@ -426,6 +427,9 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
       setMessage("Enter an amount greater than zero.");
       return;
     }
+    if ([newContribution.loanReceived, newContribution.loanInterest].some(v => !Number.isFinite(Number(v || 0)) || Number(v || 0) < 0)) {
+      setMessage("Loan received and interest must be zero or greater."); return;
+    }
     setSavingContribution(true);
     try {
       await request("/api/admin/contributions", "POST", {
@@ -433,9 +437,11 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
         contributionMonth: newContribution.contributionDate.slice(0, 7),
         amount: Number(newContribution.amount),
         paidOn: newContribution.contributionDate,
+        loanReceived: Number(newContribution.loanReceived || 0),
+        loanInterest: Number(newContribution.loanInterest || 0),
       }, true);
       setShowAddContribution(false);
-      setNewContribution({ contributionDate: today(), amount: "" });
+      setNewContribution({ contributionDate: today(), amount: "", loanReceived: "0.00", loanInterest: "0.00" });
       await refresh();
       await loadHistory();
       setMessage("Monthly contribution added successfully.");
@@ -459,7 +465,7 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
     finally { setDeletingContribution(null); }
   };
   const [editing, setEditing] = useState(null);
-  const [correction, setCorrection] = useState({ contributionMonth: "", amount: "", reason: "" });
+  const [correction, setCorrection] = useState({ contributionMonth: "", amount: "", reason: "", loanReceived: "0.00", loanInterest: "0.00" });
   const [changes, setChanges] = useState([]);
   const [message, setMessage] = useState("");
   const loadHistory = async () => {
@@ -469,11 +475,13 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
     }
     setLoading(true);
     try {
-      const [records, audit] = await Promise.all([
+      const [records, audit, summary] = await Promise.all([
         request(`/api/admin/members/${member.id}/contributions`, "GET", undefined, true),
-        request(`/api/admin/members/${member.id}/contribution-changes`, "GET", undefined, true)
+        request(`/api/admin/members/${member.id}/contribution-changes`, "GET", undefined, true),
+        request(`/api/admin/members/${member.id}/loan-summary`, "GET", undefined, true)
       ]);
       setContributions(records);
+      setLoanSummary(summary);
       setChanges(audit);
       setMessage("");
     } catch (e) { setMessage(e.message); }
@@ -483,13 +491,13 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
   if (!member) return null;
   const startEdit = c => {
     setEditing(c.id);
-    setCorrection({ contributionMonth: c.contributionMonth, amount: String(c.amount), reason: "" });
+    setCorrection({ contributionMonth: c.contributionMonth, amount: String(c.amount), reason: "", loanReceived: String(c.loanReceived ?? 0), loanInterest: String(c.loanInterest ?? 0) });
   };
   const submitCorrection = async e => {
     e.preventDefault();
     try {
       await request(`/api/admin/contributions/${editing}`, "PUT", {
-        ...correction, amount: Number(correction.amount)
+        ...correction, amount: Number(correction.amount), loanReceived: Number(correction.loanReceived || 0), loanInterest: Number(correction.loanInterest || 0)
       }, true);
       setEditing(null);
       setMessage("Contribution updated successfully");
@@ -500,6 +508,7 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
   return <section className="panel">
     <h3>Member details: {member.fullName}</h3>
     <button onClick={onClose}>Close</button>
+    <p><strong>Total loan issued:</strong> {rupee(loanSummary.issued)} &nbsp; <strong>Loan received:</strong> {rupee(loanSummary.received)} &nbsp; <strong>Outstanding loan amount:</strong> {rupee(loanSummary.outstanding)} &nbsp; <strong>Interest received:</strong> {rupee(loanSummary.interest)}</p>
     {message && <p role="status">{message}</p>}
     <div className="fields">
       <label>Name<input value={profile.fullName} disabled={!can("MEMBER_UPDATE")}
@@ -535,6 +544,10 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
             onChange={e => setNewContribution({...newContribution, amount:e.target.value})} />
         </label>
       </div>
+      <div className="fields">
+        <label>Received (loan) ₹ — optional<input type="number" min="0" step="0.01" value={newContribution.loanReceived} onChange={e=>setNewContribution({...newContribution,loanReceived:e.target.value})}/></label>
+        <label>Interest (loan) ₹ — optional<input type="number" min="0" step="0.01" value={newContribution.loanInterest} onChange={e=>setNewContribution({...newContribution,loanInterest:e.target.value})}/></label>
+      </div>
       <p className="member-add-contribution-note">Choose any valid date. The contribution month and payment date are saved from the selected date.</p>
       <div className="member-contribution-actions">
         <button type="submit" disabled={savingContribution}>{savingContribution ? "Saving..." : "Save monthly record"}</button>
@@ -544,9 +557,9 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
 
     {loading && <p>Loading contribution history...</p>}
     {!loading && contributions.length === 0 && <p>No contributions found for this member.</p>}
-    <table><thead><tr><th>Month</th><th>Amount</th><th>Paid on</th><th>Action</th></tr></thead>
+    <table><thead><tr><th>Month</th><th>Amount</th><th>Paid on</th><th>Loan received</th><th>Loan interest</th><th>Action</th></tr></thead>
       <tbody>{[...contributions].sort((a,b) => b.contributionMonth.localeCompare(a.contributionMonth)).map(c =>
-        <tr key={c.id}><td>{c.contributionMonth}</td><td>{rupee(c.amount)}</td><td>{c.paidOn}</td>
+        <tr key={c.id}><td>{c.contributionMonth}</td><td>{rupee(c.amount)}</td><td>{c.paidOn}</td><td>{rupee(c.loanReceived)}</td><td>{rupee(c.loanInterest)}</td>
           <td><div className="member-contribution-actions">
             {can("CONTRIBUTION_UPDATE") && <button type="button" onClick={() => startEdit(c)}>Edit</button>}
             {canDeleteContribution && <button type="button" className="contribution-delete-button"
@@ -562,15 +575,19 @@ function MemberDetails({ member, roles = [], can, save, refresh, onClose }) {
         onChange={e => setCorrection({...correction, contributionMonth:e.target.value})}/></label>
       <label>Amount<input type="number" min="0.01" step="0.01" required value={correction.amount}
         onChange={e => setCorrection({...correction, amount:e.target.value})}/></label>
+      <label>Received (loan) ₹ — optional<input type="number" min="0" step="0.01" value={correction.loanReceived} onChange={e=>setCorrection({...correction,loanReceived:e.target.value})}/></label>
+      <label>Interest (loan) ₹ — optional<input type="number" min="0" step="0.01" value={correction.loanInterest} onChange={e=>setCorrection({...correction,loanInterest:e.target.value})}/></label>
       <label>Reason for change<input required maxLength={500} value={correction.reason}
         onChange={e => setCorrection({...correction, reason:e.target.value})}/></label>
       <button type="submit">Save correction</button><button type="button" onClick={() => setEditing(null)}>Cancel</button>
     </form>}
     <h3>Contribution correction audit</h3>
-    <table><thead><tr><th>Changed at</th><th>Month (old → new)</th><th>Amount (old → new)</th><th>Admin</th><th>Reason</th></tr></thead>
+    <table><thead><tr><th>Changed at</th><th>Month (old → new)</th><th>Amount (old → new)</th><th>Loan received (old → new)</th><th>Loan interest (old → new)</th><th>Admin</th><th>Reason</th></tr></thead>
       <tbody>{changes.map(change => <tr key={change.id}><td>{change.changedAt}</td>
         <td>{change.oldMonth} → {change.newMonth}</td>
         <td>{rupee(change.oldAmount)} → {rupee(change.newAmount)}</td>
+        <td>{rupee(change.oldLoanReceived)} → {rupee(change.newLoanReceived)}</td>
+        <td>{rupee(change.oldLoanInterest)} → {rupee(change.newLoanInterest)}</td>
         <td>{change.changedBy}</td><td>{change.reason}</td></tr>)}</tbody>
     </table>
   </section>;

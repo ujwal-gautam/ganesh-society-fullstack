@@ -20,6 +20,10 @@ public class Contribution {
     @Column(name = "paid_on")
     public LocalDate paidOn;
     public String notes;
+    @Column(name = "loan_received")
+    public BigDecimal loanReceived;
+    @Column(name = "loan_interest")
+    public BigDecimal loanInterest;
     @Column(name = "deleted_at")
     public Instant deletedAt;
     @Column(name = "deleted_by")
