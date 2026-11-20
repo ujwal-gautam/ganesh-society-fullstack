@@ -17,3 +17,22 @@ sudo systemctl reload caddy
 cd /opt/ganesh-society
 sudo nano docker-compose.prod.yml
 sudo nano .env
+
+DB connection url: docker compose -f docker-compose.prod.yml exec mysql \
+mysql -u ganesh_app -p ganesh_society
+password: Ganesh@1234G
+
+other details:-
+
+DOCKERHUB_USERNAME=ujwalgautam
+IMAGE_TAG=latest
+
+DB_PASSWORD=Ganesh@1234G
+MYSQL_ROOT_PASSWORD=Ganesh@1234G
+
+ADMIN_EMAIL=ujwalgautam66@gmail.com
+ADMIN_PASSWORD=Ganesh@1234G
+
+CORS_ORIGIN=https://your-project.pages.dev
+
+https://ganesh-society-api.duckdns.org/api/public/snapshot
