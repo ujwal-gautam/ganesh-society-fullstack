@@ -22,6 +22,23 @@ DB connection url: docker compose -f docker-compose.prod.yml exec mysql \
 mysql -u ganesh_app -p ganesh_society
 password: Ganesh@1234G
 
+delete data script:-
+
+-- Step 1: Delete contribution change history
+DELETE FROM contribution_changes;
+
+-- Step 2: Delete loan repayment records
+DELETE FROM loan_repayments;
+
+-- Step 3: Delete contributions
+DELETE FROM contributions;
+
+-- Step 4: Delete loans
+DELETE FROM loans;
+
+-- Step 5: Delete members
+DELETE FROM members;
+
 other details:-
 
 DOCKERHUB_USERNAME=ujwalgautam
